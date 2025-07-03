@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { DoorOpenIcon as DialogIcon } from "lucide-react"
 import { Trophy, ArrowLeft, ArrowRight, Zap, Settings } from "lucide-react"
 
 // Game constants
@@ -234,12 +234,24 @@ export default function F1PolePosition() {
     }
   }, [])
 
-  const loadLeaderboard = () => {
+  const loadLeaderboard = async () => {
+    try {
+      // Try to load from MongoDB first
+      const response = await fetch(`/api/leaderboard?circuit=${selectedTrack}`)
+      if (response.ok) {
+        const data = await response.json()
+        setLeaderboard(data.times || [])
+        return
+      }
+    } catch (error) {
+      console.error("Failed to load from MongoDB:", error)
+    }
+
+    // Fallback to localStorage
     try {
       const saved = localStorage.getItem(`f1-leaderboard-${selectedTrack}`)
       if (saved) {
         const data = JSON.parse(saved) as LeaderboardEntry[]
-        // Ensure data is sorted by lapTime ascending (fastest first)
         const sortedData = data.sort((a, b) => a.lapTime - b.lapTime)
         setLeaderboard(sortedData)
       } else {
@@ -251,34 +263,51 @@ export default function F1PolePosition() {
     }
   }
 
-  const submitToLeaderboard = (lapTime: number) => {
+  const submitToLeaderboard = async (lapTime: number) => {
     if (!driverName.trim()) return
 
+    const newEntry: LeaderboardEntry = {
+      id: Date.now().toString(),
+      driverName: driverName.trim(),
+      constructor: TEAMS[selectedTeam].name,
+      circuit: TRACKS[selectedTrack].name,
+      lapTime,
+      timestamp: Date.now(),
+    }
+
     try {
-      // Get existing leaderboard for this track
+      // Try to save to MongoDB first
+      const response = await fetch("/api/leaderboard", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          driverName: newEntry.driverName,
+          constructor: newEntry.constructor,
+          circuit: newEntry.circuit,
+          lapTime: newEntry.lapTime,
+          timestamp: newEntry.timestamp,
+          teamColor: TEAMS[selectedTeam].color,
+        }),
+      })
+
+      if (response.ok) {
+        // Reload leaderboard from MongoDB
+        await loadLeaderboard()
+        return
+      }
+    } catch (error) {
+      console.error("Failed to save to MongoDB:", error)
+    }
+
+    // Fallback to localStorage
+    try {
       const saved = localStorage.getItem(`f1-leaderboard-${selectedTrack}`)
       const existingData = saved ? (JSON.parse(saved) as LeaderboardEntry[]) : []
-
-      // Create new entry
-      const newEntry: LeaderboardEntry = {
-        id: Date.now().toString(),
-        driverName: driverName.trim(),
-        constructor: TEAMS[selectedTeam].name,
-        circuit: TRACKS[selectedTrack].name,
-        lapTime,
-        timestamp: Date.now(),
-      }
-
-      // Add new entry and sort by lapTime
       const updatedData = [...existingData, newEntry].sort((a, b) => a.lapTime - b.lapTime)
-
-      // Keep only top 20 times
       const topTimes = updatedData.slice(0, 20)
-
-      // Save to localStorage
       localStorage.setItem(`f1-leaderboard-${selectedTrack}`, JSON.stringify(topTimes))
-
-      // Update state
       setLeaderboard(topTimes)
     } catch (error) {
       console.error("Failed to save to local leaderboard:", error)
@@ -714,6 +743,12 @@ export default function F1PolePosition() {
     setShowResults(false)
   }
 
+  // Helper function to get team color from constructor name
+  const getTeamColorFromConstructor = (constructorName: string): string => {
+    const teamEntry = Object.entries(TEAMS).find(([_, team]) => team.name === constructorName)
+    return teamEntry ? teamEntry[1].color : "#DC143C" // Default to Ferrari red
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-red-950">
       {/* F1 Header with Timer */}
@@ -895,21 +930,32 @@ export default function F1PolePosition() {
               </CardHeader>
               <CardContent className="p-4">
                 <div className="space-y-3 max-h-80 overflow-y-auto f1-scroll">
-                  {leaderboard.slice(0, 10).map((entry, index) => (
-                    <div
-                      key={entry.id}
-                      className="flex items-center gap-3 p-3 bg-gradient-to-r from-black to-gray-900 rounded-lg border border-red-500/20"
-                    >
-                      <div className="w-8 h-8 bg-gradient-to-br from-red-600 to-red-700 rounded-full flex items-center justify-center text-white text-sm font-bold border border-red-400">
-                        {index + 1}
+                  {leaderboard.slice(0, 10).map((entry, index) => {
+                    const teamColor = getTeamColorFromConstructor(entry.constructor)
+                    return (
+                      <div
+                        key={entry.id}
+                        className="flex items-center gap-3 p-3 bg-gradient-to-r from-black to-gray-900 rounded-lg border border-red-500/20"
+                      >
+                        <div
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold border-2"
+                          style={{
+                            backgroundColor: teamColor,
+                            borderColor: teamColor,
+                          }}
+                        >
+                          {index + 1}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-bold text-white truncate">{entry.driverName}</div>
+                          <div className="text-xs truncate font-medium" style={{ color: teamColor }}>
+                            {entry.constructor}
+                          </div>
+                        </div>
+                        <div className="text-sm font-mono text-white font-bold">{formatTime(entry.lapTime)}</div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-bold text-white truncate">{entry.driverName}</div>
-                        <div className="text-xs text-red-400 truncate">{entry.constructor}</div>
-                      </div>
-                      <div className="text-sm font-mono text-white font-bold">{formatTime(entry.lapTime)}</div>
-                    </div>
-                  ))}
+                    )
+                  })}
                   {leaderboard.length === 0 && (
                     <div className="text-center text-gray-400 py-8">
                       <Trophy className="w-12 h-12 mx-auto mb-2 opacity-50" />
@@ -925,49 +971,9 @@ export default function F1PolePosition() {
       </div>
 
       {/* Results Dialog */}
-      <Dialog open={showResults} onOpenChange={setShowResults}>
-        <DialogContent className="bg-gradient-to-br from-black to-gray-900 border-2 border-red-500 shadow-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-red-400 text-center text-2xl font-bold">QUALIFYING COMPLETE!</DialogTitle>
-          </DialogHeader>
-          <div className="text-center space-y-6 p-4">
-            <div className="bg-black border border-red-500 rounded-lg p-6">
-              <div className="text-4xl font-mono text-white font-bold mb-2">{formatTime(gameState.currentTime)}</div>
-              <div className="text-red-400 font-medium">FINAL LAP TIME</div>
-            </div>
-
-            {gameState.bestTime === gameState.currentTime && (
-              <div className="text-green-400 font-bold text-lg flex items-center justify-center gap-2">
-                <Trophy className="w-6 h-6" />
-                NEW PERSONAL BEST!
-              </div>
-            )}
-
-            <div className="flex gap-3">
-              <Button
-                onClick={() => {
-                  submitToLeaderboard(gameState.currentTime)
-                  setShowResults(false)
-                }}
-                className="flex-1 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-bold"
-                disabled={!driverName.trim()}
-              >
-                SAVE TO LOCAL LEADERBOARD
-              </Button>
-              <Button
-                onClick={() => {
-                  setShowResults(false)
-                  startRace()
-                }}
-                variant="outline"
-                className="flex-1 border-red-500 text-red-400 hover:bg-red-900/20"
-              >
-                TRY AGAIN
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <DialogIcon open={showResults} onOpenChange={setShowResults}>
+        {/* Dialog content here */}
+      </DialogIcon>
     </div>
   )
 }

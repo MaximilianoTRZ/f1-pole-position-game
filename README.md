@@ -1,5 +1,4 @@
 # F1 racing game project
-![f1 game](https://github.com/user-attachments/assets/b6920e90-8c52-420b-ae48-e882b2d8bea5)
 
 *Automatically synced with your [v0.dev](https://v0.dev) deployments*
 
